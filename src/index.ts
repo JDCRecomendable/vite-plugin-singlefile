@@ -8,6 +8,11 @@ export type Config = {
 	//
 	// @default true
 	useRecommendedBuildConfig?: boolean
+	// Modifies the Vite build config to exclude the base to files that will not be inlined.
+	// See `_excludeBase` in the plugin implementation for more details on how this works.
+	//
+	// @default true
+	excludeBase?: boolean
 	// Remove the unused Vite module loader. Safe to do since all JS is inlined by this plugin.
 	//
 	// @default false
@@ -22,7 +27,7 @@ export type Config = {
 	deleteInlinedFiles?: boolean
 }
 
-const defaultConfig = { useRecommendedBuildConfig: true, removeViteModuleLoader: false, deleteInlinedFiles: true }
+const defaultConfig = { useRecommendedBuildConfig: true, removeViteModuleLoader: false, deleteInlinedFiles: true, excludeBase: true }
 
 export function replaceScript(html: string, scriptFilename: string, scriptCode: string, removeViteModuleLoader = false): string {
 	const reScript = new RegExp(`<script([^>]*?) src="[./]*${scriptFilename}"([^>]*)></script>`)
@@ -43,13 +48,18 @@ const warnNotInlined = (filename: string) => console.warn(`WARNING: asset not in
 
 export function viteSingleFile({
 	useRecommendedBuildConfig = true,
+	excludeBase = true,
 	removeViteModuleLoader = false,
 	inlinePattern = [],
 	deleteInlinedFiles = true,
 }: Config = defaultConfig): Plugin {
+	let configHook = undefined;
+	if (useRecommendedBuildConfig) configHook = _useRecommendedBuildConfig;
+	if (excludeBase) configHook = _excludeBase;
+	if (useRecommendedBuildConfig && excludeBase) configHook = _useRecommendedBuildConfigAndExcludeBase;
 	return {
 		name: "vite:singlefile",
-		config: useRecommendedBuildConfig ? _useRecommendedBuildConfig : undefined,
+		config: configHook,
 		enforce: "post",
 		generateBundle: (_, bundle) => {
 			const jsExtensionTest = /\.[mc]?js$/
@@ -113,8 +123,6 @@ const _useRecommendedBuildConfig = (config: UserConfig) => {
 	config.build.chunkSizeWarningLimit = 100000000
 	// Emit all CSS as a single file, which `vite-plugin-singlefile` can then inline.
 	config.build.cssCodeSplit = false
-	// Subfolder bases are not supported, and shouldn't be needed because we're embedding everything.
-	config.base = undefined
 
 	if (!config.build.rollupOptions) config.build.rollupOptions = {}
 	if (!config.build.rollupOptions.output) config.build.rollupOptions.output = {}
@@ -129,4 +137,15 @@ const _useRecommendedBuildConfig = (config: UserConfig) => {
 	} else {
 		updateOutputOptions(config.build.rollupOptions.output as OutputOptions)
 	}
+}
+
+// Modifies the Vite build config to exclude subfolder bases, which are usually not needed because we're embedding everything.
+const _excludeBase = (config: UserConfig) => {
+	// Subfolder bases are not supported, and shouldn't be needed because we're embedding everything.
+	config.base = undefined
+}
+
+const _useRecommendedBuildConfigAndExcludeBase = (config: UserConfig) => {
+	_useRecommendedBuildConfig(config)
+	_excludeBase(config)
 }
